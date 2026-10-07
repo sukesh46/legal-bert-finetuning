@@ -1,0 +1,63 @@
+{
+  "version": "tiny-cuad-fixture",
+  "data": [
+    {
+      "title": "AlphaContract",
+      "paragraphs": [
+        {
+          "context": "This Agreement shall be governed by the laws of Delaware. The parties are Acme Inc and Beta LLC.",
+          "qas": [
+            {
+              "question": "Highlight the parts (if any) of this contract related to \"Governing Law\" that should be reviewed.",
+              "id": "alpha-gl",
+              "answers": [
+                {"text": "shall be governed by the laws of Delaware", "answer_start": 15}
+              ],
+              "is_impossible": false
+            },
+            {
+              "question": "Highlight the parts (if any) of this contract related to \"Parties\" that should be reviewed.",
+              "id": "alpha-parties",
+              "answers": [
+                {"text": "Acme Inc and Beta LLC", "answer_start": 74}
+              ],
+              "is_impossible": false
+            },
+            {
+              "question": "Highlight the parts (if any) of this contract related to \"Non-Compete\" that should be reviewed.",
+              "id": "alpha-nc",
+              "answers": [],
+              "is_impossible": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "BetaContract",
+      "paragraphs": [
+        {
+          "context": "Source Code Escrow applies here and Audit Rights are reserved.",
+          "qas": [
+            {
+              "question": "Highlight the parts (if any) of this contract related to \"Audit Rights\" that should be reviewed.",
+              "id": "beta-ar",
+              "answers": [
+                {"text": "Audit Rights are reserved", "answer_start": 36}
+              ],
+              "is_impossible": false
+            },
+            {
+              "question": "Highlight the parts (if any) of this contract related to \"Source Code Escrow\" that should be reviewed.",
+              "id": "beta-sce",
+              "answers": [
+                {"text": "Source Code Escrow", "answer_start": 0}
+              ],
+              "is_impossible": false
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

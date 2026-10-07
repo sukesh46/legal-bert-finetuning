@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+
+# Project data / artifacts — never commit the raw CUAD file or checkpoints.
+# CUAD must be fetched at runtime per its distribution terms (CC BY 4.0).
+data/
+*.json.gz
+CUAD_v1.json
+checkpoints/
+cuad_bio_dataset/
+runs/
+*.log
+
+# Lock file is produced on Colab after a successful install; keep it out of
+# local commits unless deliberately captured there.
+requirements.lock.txt
+
+# OS / editor
+.DS_Store
+.ipynb_checkpoints/

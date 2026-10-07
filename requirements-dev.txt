@@ -1,0 +1,8 @@
+# Local development / test tooling. Install on top of requirements.txt
+# (or on its own for pure-logic tests that don't need the ML stack).
+-r requirements.txt
+pytest>=7.4,<9
+# numpy is needed to exercise evaluate.decode_predictions in tests. It is already a
+# transitive dep of the ML stack; pinned here (matching requirements.txt) for the
+# pure-logic test environment that doesn't install transformers/torch.
+numpy>=1.26,<2.0
