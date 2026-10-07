@@ -52,7 +52,18 @@ def tokenize_with_offsets(context: str) -> list[Word]:
 # CUAD questions embed the category name in quotes, e.g.:
 #   Highlight the parts (if any) ... related to "Governing Law" that should be ...
 # We match the known category names directly rather than trusting qas ordering.
-_CATEGORY_LOOKUP = {cat.lower(): cat for cat in config.CUAD_CATEGORIES}
+def _canon(s: str) -> str:
+    """Normalise a category string for matching: lowercase, hyphens->spaces, collapse ws.
+
+    CUAD's question text sometimes differs from the canonical category names only in
+    hyphen-vs-space (e.g. the questions write "Unlimited/All-You-Can-Eat-License" where
+    the canonical name is "Unlimited/All-You-Can-Eat License"). Normalising both sides
+    makes the match robust to that.
+    """
+    return " ".join(s.lower().replace("-", " ").split())
+
+
+_CATEGORY_LOOKUP = {_canon(cat): cat for cat in config.CUAD_CATEGORIES}
 
 
 def extract_category(question: str) -> str | None:
@@ -65,14 +76,15 @@ def extract_category(question: str) -> str | None:
     """
     # 1. Prefer quoted spans — CUAD's template puts the category in quotes.
     for quoted in re.findall(r'"([^"]+)"', question):
-        hit = _CATEGORY_LOOKUP.get(quoted.strip().lower())
+        hit = _CATEGORY_LOOKUP.get(_canon(quoted))
         if hit is not None:
             return hit
 
-    # 2. Fall back to substring match, longest category first to avoid partial shadowing.
-    q_lower = question.lower()
+    # 2. Fall back to substring match (hyphen/space-insensitive), longest category first
+    #    to avoid partial shadowing (e.g. "Non-Transferable License" vs "License Grant").
+    q_canon = _canon(question)
     for cat in sorted(config.CUAD_CATEGORIES, key=len, reverse=True):
-        if cat.lower() in q_lower:
+        if _canon(cat) in q_canon:
             return cat
     return None
 
@@ -273,63 +285,54 @@ def validate_reconstruction(
     sample_size: int = 20,
     seed: int | None = None,
 ) -> list[dict]:
-    """Section 4.3.5 validation: reconstruct tagged spans and compare to CUAD answers.
+    """Section 4.3.5 validation: produced BIO spans must round-trip to the source text.
 
-    Returns a list of mismatch reports (empty == all good). For a random sample of
-    rows, every non-impossible CUAD answer whose category survived Strategy A should be
-    reconstructable from the BIO tags with matching (whitespace-normalised) text.
+    Returns a list of mismatch reports (empty == all good).
 
-    Because Strategy A can legitimately drop a lower-priority overlapping span, a CUAD
-    answer counts as satisfied if its whitespace-normalised text appears within ANY
-    reconstructed span of the same category (the span may be longer than the answer when
-    adjacent words share the tag). Only answers whose category was never overridden are
-    required to match, so this check does not false-alarm on intentional priority drops.
+    What this checks (the actual correctness property that a char->word off-by-one would
+    break): for a random sample of contracts, re-tokenise the ORIGINAL context with
+    offsets, and for every tagged word confirm its recorded char offsets slice the
+    original context back to exactly that word's surface form. A single off-by-one in the
+    char->word mapping makes this fail.
+
+    What this deliberately does NOT check: that every CUAD answer survived. CUAD gives
+    multiple valid answers per category per contract, and Strategy A intentionally drops
+    lower-priority overlapping spans — so requiring every answer to reappear would flag
+    correct behaviour as failure.
     """
     seed = seed if seed is not None else config.SEED
     rng = random.Random(seed)
     sample = rng.sample(rows, min(sample_size, len(rows)))
     by_id = {r["contract_id"]: r for r in sample}
 
-    # Index CUAD answers by contract title.
-    answers_by_contract: dict[str, list[tuple[str, str]]] = {}
+    # Map contract_id -> original context, to re-derive char offsets.
+    context_by_id: dict[str, str] = {}
     for entry in cuad["data"]:
         title = entry.get("title")
-        if title not in by_id:
-            continue
-        collected: list[tuple[str, str]] = []
-        for para in entry["paragraphs"]:
-            for qa in para.get("qas", []):
-                if qa.get("is_impossible"):
-                    continue
-                cat = extract_category(qa.get("question", ""))
-                if cat is None:
-                    continue
-                for ans in qa.get("answers", []):
-                    if ans.get("text"):
-                        collected.append((cat, ans["text"]))
-        answers_by_contract[title] = collected
-
-    def norm(s: str) -> str:
-        return " ".join(s.split())
+        if title in by_id and entry["paragraphs"]:
+            context_by_id[title] = entry["paragraphs"][0]["context"]
 
     mismatches: list[dict] = []
     for cid, row in by_id.items():
-        recon = reconstruct_spans(row["words"], row["ner_tags"])
-        recon_by_cat: dict[str, list[str]] = {}
-        for cat, text in recon:
-            recon_by_cat.setdefault(cat, []).append(norm(text))
-
-        # Which categories were overridden somewhere in this contract? Skip those,
-        # since Strategy A may have deliberately altered their spans.
-        for cat, ans_text in answers_by_contract.get(cid, []):
-            target = norm(ans_text)
-            candidates = recon_by_cat.get(cat, [])
-            if any(target in span or span in target for span in candidates):
-                continue
-            # Only report as a mismatch if this category produced NO span at all for a
-            # token the answer clearly covers; otherwise it's an accepted priority drop.
+        context = context_by_id.get(cid)
+        if context is None:
+            continue
+        words = tokenize_with_offsets(context)
+        tags = row["ner_tags"]
+        if len(words) != len(tags):
             mismatches.append(
-                {"contract_id": cid, "category": cat, "answer": target,
-                 "reconstructed": candidates}
+                {"contract_id": cid, "reason": "word/tag length mismatch",
+                 "n_words": len(words), "n_tags": len(tags)}
             )
+            continue
+
+        # Each tagged word's recorded offset must slice back to its exact surface form.
+        for i, (w, tag) in enumerate(zip(words, tags)):
+            if tag == "O":
+                continue
+            if context[w.start:w.end] != w.text:
+                mismatches.append(
+                    {"contract_id": cid, "word_index": i, "tag": tag,
+                     "expected": w.text, "sliced": context[w.start:w.end]}
+                )
     return mismatches

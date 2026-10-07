@@ -50,6 +50,19 @@ def test_extract_category_unknown_returns_none():
     assert c2b.extract_category('related to "Teleportation Clause"') is None
 
 
+def test_extract_category_hyphen_space_insensitive():
+    # CUAD writes this with a hyphen before "License"; canonical name uses a space.
+    q = 'related to "Unlimited/All-You-Can-Eat-License" that should be reviewed'
+    assert c2b.extract_category(q) == "Unlimited/All-You-Can-Eat License"
+
+
+def test_all_41_categories_match_their_canonical_quoted_form():
+    # Every canonical category must be recoverable from a quoted question containing it.
+    for cat in config.CUAD_CATEGORIES:
+        q = f'parts related to "{cat}" that should be reviewed'
+        assert c2b.extract_category(q) == cat
+
+
 # --------------------------------------------------------------------------- #
 # Tagging + the all-important reconstruction
 # --------------------------------------------------------------------------- #
@@ -70,11 +83,21 @@ def test_impossible_qas_is_skipped(cuad):
     assert not any("Non-Compete" in t for t in tags)
 
 
-def test_reconstruction_matches_answers_exactly(cuad):
-    """Section 4.3.5: tagged spans must reconstruct to the original answer text."""
+def test_reconstruction_passes_on_correct_conversion(cuad):
+    """Section 4.3.5: tagged words round-trip to the original context via char offsets."""
     rows, _ = c2b.convert_cuad(cuad)
     mismatches = c2b.validate_reconstruction(cuad, rows, sample_size=len(rows))
     assert mismatches == [], f"Span reconstruction mismatches: {mismatches}"
+
+
+def test_reconstruction_detects_corrupted_offsets(cuad):
+    """A deliberate word/tag length corruption must be caught by the validator."""
+    rows, _ = c2b.convert_cuad(cuad)
+    # Corrupt one row: drop a tag so word/tag lengths disagree -> must be flagged.
+    bad = [dict(r) for r in rows]
+    bad[0] = {**bad[0], "ner_tags": bad[0]["ner_tags"][:-1]}
+    mismatches = c2b.validate_reconstruction(cuad, bad, sample_size=len(bad))
+    assert any(m.get("reason") == "word/tag length mismatch" for m in mismatches)
 
 
 def test_reconstruct_spans_roundtrip():

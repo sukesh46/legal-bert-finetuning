@@ -19,17 +19,21 @@ from dataclasses import dataclass
 
 from . import config
 
-# Preferred source: the canonical Hugging Face dataset (CC BY 4.0). This is more robust
-# than scraping a raw GitHub URL (which moves) and needs no auth. See load_cuad_hf().
-HF_DATASET_ID = "theatticusproject/cuad-qa"
+# Canonical source: the Atticus GitHub repo (CC BY 4.0) ships the dataset as `data.zip`.
+# The repo was renamed to `The-Atticus-Project/cuad` (hyphens); the zip contains the full
+# SQuAD-2.0-style JSON as `CUADv1.json` (note: no underscore).
+#
+# This is preferred over the Hugging Face `datasets` route: the HF CUAD datasets are
+# script-based, which `datasets` >= 4.0 refuses to load ("Dataset scripts are no longer
+# supported"), and the auto-Parquet export is unstructured. The raw JSON here is already
+# the exact nested shape convert_cuad expects, so no adaptation is needed.
+CUAD_ZIP_URL = "https://github.com/The-Atticus-Project/cuad/raw/main/data.zip"
+# Member name of the JSON inside the zip.
+_ZIP_MEMBER_SUFFIX = "CUADv1.json"
 
-# Legacy fallback: the repository historically distributed CUAD_v1.json inside a zip.
-# NOTE: the exact raw path has changed over time; prefer the HF loader above.
-CUAD_ZIP_URL = (
-    "https://github.com/TheAtticusProject/cuad/raw/main/CUAD_v1.zip"
-)
-# Member name of the JSON inside the zip (CUAD ships it under a top-level folder).
-_ZIP_MEMBER_SUFFIX = "CUAD_v1.json"
+# Legacy Hugging Face dataset id (script-based; NOT loadable under datasets >= 4.0).
+# Kept only for reference / the hf_rows_to_cuad adapter, which is still unit-tested.
+HF_DATASET_ID = "theatticusproject/cuad-qa"
 
 
 @dataclass
