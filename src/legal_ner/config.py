@@ -44,6 +44,25 @@ DATASET_DIRNAME = "cuad_bio_dataset"
 CHECKPOINTS_DIRNAME = "checkpoints"
 
 # --------------------------------------------------------------------------- #
+# Label strategy (spec section 4.2)
+# --------------------------------------------------------------------------- #
+#   "A" — single-label BIO: one 83-way softmax per token. Overlapping clauses collapse
+#         to one category by OVERLAP_PRIORITY. Simple; discards overlaps.
+#   "B" — multi-label presence: 41 independent sigmoid heads per token, each predicting
+#         whether the token is inside that category's span. Preserves overlaps; uses
+#         BCEWithLogitsLoss. See model.py / the Strategy B paths in tokenize_align,
+#         train, evaluate, inference.
+STRATEGY = "B"
+
+# Number of training epochs. Lowered from 5 to 3 for Strategy B: the Strategy A run
+# showed validation loss bottoming at epoch 2 and overfitting after, so 3 is ample.
+NUM_TRAIN_EPOCHS = 3
+
+# Decision threshold on sigmoid outputs for Strategy B (a token is "in" a category when
+# its probability exceeds this).
+STRATEGY_B_THRESHOLD = 0.5
+
+# --------------------------------------------------------------------------- #
 # Chunking / tokenization window (section 5 + section 6 MUST share this)
 # --------------------------------------------------------------------------- #
 WINDOW_SIZE = 384          # sliding-window size in tokens; also tokenizer max_length

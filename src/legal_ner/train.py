@@ -20,19 +20,25 @@ from . import config, labels as lbl
 from .evaluate import make_compute_metrics
 
 
-def load_model_and_tokenizer(model_name: str = config.MODEL_NAME):
-    """Load the token-classification model + tokenizer with the 83-label head."""
-    from transformers import AutoModelForTokenClassification, AutoTokenizer
+def load_tokenizer(model_name: str = config.MODEL_NAME):
+    """Load the tokenizer and warn if it won't lowercase for an -uncased checkpoint."""
+    from transformers import AutoTokenizer
 
-    label2id, id2label = lbl.build_label_maps()
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-
-    # The checkpoint is -uncased; confirm the tokenizer lowercases (section 7 note).
     if not getattr(tokenizer, "do_lower_case", True):
         print(
             "WARNING: tokenizer is not lower-casing input, but the model is -uncased. "
             "Case-sensitive entity distinctions will be lost (see README limitations)."
         )
+    return tokenizer
+
+
+def load_model_and_tokenizer(model_name: str = config.MODEL_NAME):
+    """Load the (Strategy A) token-classification model + tokenizer with the 83-label head."""
+    from transformers import AutoModelForTokenClassification
+
+    label2id, id2label = lbl.build_label_maps()
+    tokenizer = load_tokenizer(model_name)
 
     model = AutoModelForTokenClassification.from_pretrained(
         model_name,
@@ -57,7 +63,7 @@ def build_training_args(output_dir: str | None = None):
         per_device_train_batch_size=16,
         per_device_eval_batch_size=16,
         gradient_accumulation_steps=2,  # effective batch size 32
-        num_train_epochs=5,
+        num_train_epochs=config.NUM_TRAIN_EPOCHS,
         weight_decay=0.01,
         fp16=True,                      # mixed precision — ~2x speedup on T4
         logging_steps=50,
@@ -79,6 +85,36 @@ def _has_resumable_checkpoint(output_dir: str) -> bool:
     )
 
 
+def _multilabel_data_collator(tokenizer, num_categories: int):
+    """Collator for Strategy B: pads input fields and 2D (seq, C) label rows.
+
+    HF's DataCollatorForTokenClassification only handles 1D integer label sequences, so
+    for Strategy B we pad manually: inputs via the tokenizer, and each example's label
+    matrix with all--100 rows up to the batch's max length.
+    """
+    import torch
+
+    def collate(features):
+        labels = [f["labels"] for f in features]
+        inputs = [{k: v for k, v in f.items() if k != "labels"} for f in features]
+        batch = tokenizer.pad(inputs, padding=True, return_tensors="pt")
+        max_len = batch["input_ids"].shape[1]
+
+        ignore_row = [-100.0] * num_categories
+        padded = []
+        for row in labels:
+            row = [list(r) for r in row]
+            if len(row) < max_len:
+                row = row + [list(ignore_row) for _ in range(max_len - len(row))]
+            else:
+                row = row[:max_len]
+            padded.append(row)
+        batch["labels"] = torch.tensor(padded, dtype=torch.float32)
+        return batch
+
+    return collate
+
+
 def train(
     tokenized_train,
     tokenized_val,
@@ -86,6 +122,10 @@ def train(
     output_dir: str | None = None,
 ):
     """Fine-tune the model, resuming from a Drive checkpoint if one exists.
+
+    Dispatches on config.STRATEGY:
+      * "A" — AutoModelForTokenClassification (83-label softmax) + seqeval metrics.
+      * "B" — multi-label per-category model (model.py) + per-category BCE metrics.
 
     Persists labels.json alongside the checkpoints so inference never guesses label
     ordering (section 4.1). Returns the fitted Trainer.
@@ -96,14 +136,30 @@ def train(
     output_dir = output_dir or config.project_path(config.CHECKPOINTS_DIRNAME)
     os.makedirs(output_dir, exist_ok=True)
 
-    # labels.json must travel with every checkpoint.
+    # labels.json must travel with every checkpoint (both strategies).
     lbl.save_labels(os.path.join(output_dir, config.LABELS_FILENAME))
 
-    model, tokenizer = load_model_and_tokenizer(model_name)
-    _, id2label = lbl.build_label_maps()
-
+    tokenizer = load_tokenizer(model_name)
     args = build_training_args(output_dir)
-    data_collator = DataCollatorForTokenClassification(tokenizer=tokenizer)
+
+    if config.STRATEGY == "B":
+        from .evaluate import make_compute_metrics_multilabel
+        from .model import build_multilabel_model, strategy_b_categories
+
+        categories = strategy_b_categories()
+        model = build_multilabel_model(model_name, categories)
+        data_collator = _multilabel_data_collator(tokenizer, len(categories))
+        compute_metrics = make_compute_metrics_multilabel(categories)
+    else:
+        from transformers import AutoModelForTokenClassification
+
+        label2id, id2label = lbl.build_label_maps()
+        model = AutoModelForTokenClassification.from_pretrained(
+            model_name, num_labels=lbl.num_labels(),
+            id2label=id2label, label2id=label2id,
+        )
+        data_collator = DataCollatorForTokenClassification(tokenizer=tokenizer)
+        compute_metrics = make_compute_metrics(id2label)
 
     trainer = Trainer(
         model=model,
@@ -113,7 +169,7 @@ def train(
         # transformers 5.x removed Trainer(tokenizer=...); use processing_class.
         processing_class=tokenizer,
         data_collator=data_collator,
-        compute_metrics=make_compute_metrics(id2label),
+        compute_metrics=compute_metrics,
     )
 
     # Colab resilience (section 7): resume from the last Drive checkpoint if present.

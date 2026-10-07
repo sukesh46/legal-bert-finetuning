@@ -186,3 +186,135 @@ def load_for_inference(model_dir: str):
         _, id2label = lbl.build_label_maps()
     model.eval()
     return model, tokenizer, id2label
+
+
+# --------------------------------------------------------------------------- #
+# Strategy B: multi-label span reconstruction (overlaps preserved)
+# --------------------------------------------------------------------------- #
+def spans_from_word_category_sets(words, word_categories) -> list[EntitySpan]:
+    """Reconstruct per-category spans from independent presence predictions.
+
+    ``word_categories`` is a list (one entry per word) of the set/iterable of categories
+    predicted present for that word. For EACH category independently, maximal contiguous
+    runs of words carrying that category become spans — so a token belonging to two
+    categories contributes to a span in both (overlaps preserved, unlike Strategy A).
+
+    Spans carry original-document char offsets. Returned sorted by (start_char, category).
+    """
+    n = len(words)
+    # Gather, per category, the sorted word indices where it is present.
+    cat_to_indices: dict[str, list[int]] = {}
+    for i, cats in enumerate(word_categories):
+        for c in cats:
+            cat_to_indices.setdefault(c, []).append(i)
+
+    spans: list[EntitySpan] = []
+    for cat, idxs in cat_to_indices.items():
+        run_start = None
+        prev = None
+        for i in idxs:
+            if run_start is None:
+                run_start, prev = i, i
+            elif i == prev + 1:
+                prev = i
+            else:
+                spans.append(_make_span(words, cat, run_start, prev))
+                run_start, prev = i, i
+        if run_start is not None:
+            spans.append(_make_span(words, cat, run_start, prev))
+
+    spans.sort(key=lambda s: (s.start_char, s.category))
+    return spans
+
+
+def _make_span(words, category, i0, i1) -> EntitySpan:
+    """Build an EntitySpan covering word indices [i0, i1] inclusive."""
+    text = " ".join(w.text for w in words[i0:i1 + 1])
+    return EntitySpan(category, text, words[i0].start, words[i1].end)
+
+
+def merge_window_category_sets(chunk_specs, num_words) -> list[set]:
+    """Merge per-chunk per-word category SETS from overlapping windows (Strategy B).
+
+    ``chunk_specs``: list of {"start": int, "cat_sets": [set, ...]}. Overlapping windows
+    are unioned per word (a category predicted in any covering window is kept).
+    """
+    merged: list[set] = [set() for _ in range(num_words)]
+    for spec in chunk_specs:
+        start = spec["start"]
+        for offset, cats in enumerate(spec["cat_sets"]):
+            wi = start + offset
+            if wi >= num_words:
+                break
+            merged[wi] |= set(cats)
+    return merged
+
+
+def predict_multilabel(
+    text: str,
+    model,
+    tokenizer,
+    categories=None,
+    threshold: float = config.STRATEGY_B_THRESHOLD,
+    window_size: int = config.WINDOW_SIZE,
+    stride: int = config.STRIDE,
+) -> list[EntitySpan]:
+    """Strategy B inference: independent per-category presence -> overlapping spans."""
+    import torch
+
+    if categories is None:
+        categories = list(config.CUAD_CATEGORIES)
+
+    words = c2b.tokenize_with_offsets(text)
+    word_strs = [w.text for w in words]
+    row = {"contract_id": "inference", "words": word_strs, "ner_tags": ["O"] * len(word_strs)}
+    chunks = chunking.chunk_row(row, window_size=window_size, stride=stride)
+    step = chunking.word_stride(stride)
+
+    chunk_specs = []
+    for chunk in chunks:
+        if not chunk.words:
+            continue
+        start = chunk.chunk_index * step
+        enc = tokenizer([chunk.words], is_split_into_words=True, truncation=True,
+                        max_length=window_size, return_tensors="pt")
+        with torch.no_grad():
+            logits = model(**{k: v for k, v in enc.items()}).logits[0]  # (T, C)
+        probs = torch.sigmoid(logits)
+        word_ids = enc.word_ids(batch_index=0)
+
+        # First-subword rule: take each word's first subword prediction.
+        per_word: dict[int, set] = {}
+        prev = None
+        for pos, wid in enumerate(word_ids):
+            if wid is None or wid == prev:
+                prev = wid
+                continue
+            present = {categories[c] for c in range(len(categories))
+                       if float(probs[pos, c]) >= threshold}
+            per_word[wid] = present
+            prev = wid
+        cat_sets = [per_word.get(i, set()) for i in range(len(chunk.words))]
+        chunk_specs.append({"start": start, "cat_sets": cat_sets})
+
+    merged = merge_window_category_sets(chunk_specs, len(words))
+    return spans_from_word_category_sets(words, merged)
+
+
+def load_for_inference_multilabel(model_dir: str):
+    """Load a Strategy B (model, tokenizer, categories) from a checkpoint directory."""
+    import os
+
+    from transformers import AutoTokenizer
+
+    from .model import build_multilabel_model
+
+    tokenizer = AutoTokenizer.from_pretrained(model_dir)
+    categories = list(config.CUAD_CATEGORIES)
+    # Rebuild the architecture and load the saved weights.
+    import torch
+    model = build_multilabel_model(config.MODEL_NAME, categories)
+    state = torch.load(os.path.join(model_dir, "pytorch_model.bin"), map_location="cpu")
+    model.load_state_dict(state)
+    model.eval()
+    return model, tokenizer, categories

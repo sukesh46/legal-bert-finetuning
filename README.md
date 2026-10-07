@@ -99,6 +99,26 @@ Escrow`, `Most Favored Nation`) when spans collide. The audit counter lets you q
 much information the collapse discards per category pair; if a critical pair shows heavy
 loss, Strategy B (multi-label sigmoid heads, spec §4.2) is the documented upgrade path.
 
+## Strategy A vs B (label representation)
+
+Set `config.STRATEGY` to choose how overlapping clauses are handled:
+
+- **`"A"` (single-label BIO)** — one 83-way softmax per token; overlapping categories
+  collapse to one via `OVERLAP_PRIORITY`. Simple, but discards overlaps. A 5-epoch run
+  reached ~0.33 aggregate entity F1, with overlap-prone and low-support categories (e.g.
+  the Affiliate License variants) scoring ~0 — the documented limitation of single-label
+  collapse.
+- **`"B"` (multi-label presence)** — 41 independent sigmoid heads per token
+  (`model.py`), trained with masked `BCEWithLogitsLoss`. A token can belong to several
+  categories at once, preserving overlaps. Metrics are token-level per-category P/R/F1
+  (micro-averaged), not seqeval span F1 — the report labels this. Intended to lift the
+  overlap-blocked categories that Strategy A zeroed out.
+
+`NUM_TRAIN_EPOCHS` defaults to 3 (the Strategy A run overfit after epoch 2).
+
+> The deterministic Strategy B pieces (encoding, metric math, span reconstruction) are
+> unit-tested, but whether B improves F1 can only be confirmed by a GPU training run.
+
 ## Known limitations
 
 - **Uncased model.** `legal-bert-base-uncased` lowercases input, so case-based distinctions

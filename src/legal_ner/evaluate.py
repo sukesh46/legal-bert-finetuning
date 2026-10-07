@@ -69,6 +69,92 @@ def make_compute_metrics(id2label):
     return compute_metrics
 
 
+# --------------------------------------------------------------------------- #
+# Strategy B: multi-label (per-category) metrics
+# --------------------------------------------------------------------------- #
+def multilabel_counts(logits, labels, threshold: float = config.STRATEGY_B_THRESHOLD):
+    """Per-category token-level TP/FP/FN from Strategy B logits and multi-hot labels.
+
+    ``logits`` shape (..., C), ``labels`` shape (..., C) with ignored positions marked by
+    a row whose first entry is -100.0. Returns (tp, fp, fn) arrays of length C.
+
+    Metrics are token-level per category (a token is "in" category c when sigmoid(logit)
+    exceeds ``threshold``). This is the Strategy B analogue of entity presence; it is the
+    honest, directly-computable signal — not seqeval span F1 — and the report notes that.
+    """
+    import numpy as np
+
+    logits = np.asarray(logits, dtype=np.float64)
+    labels = np.asarray(labels, dtype=np.float64)
+    C = logits.shape[-1]
+    logits = logits.reshape(-1, C)
+    labels = labels.reshape(-1, C)
+
+    valid = labels[:, 0] != -100.0
+    logits = logits[valid]
+    labels = labels[valid]
+
+    probs = 1.0 / (1.0 + np.exp(-logits))
+    preds = (probs >= threshold).astype(np.float64)
+
+    tp = (preds * labels).sum(axis=0)
+    fp = (preds * (1.0 - labels)).sum(axis=0)
+    fn = ((1.0 - preds) * labels).sum(axis=0)
+    return tp, fp, fn
+
+
+def _prf(tp, fp, fn):
+    """Precision/recall/F1 from count arrays, with safe zero handling."""
+    import numpy as np
+
+    precision = np.where((tp + fp) > 0, tp / (tp + fp), 0.0)
+    recall = np.where((tp + fn) > 0, tp / (tp + fn), 0.0)
+    f1 = np.where((precision + recall) > 0,
+                  2 * precision * recall / (precision + recall), 0.0)
+    return precision, recall, f1
+
+
+def make_compute_metrics_multilabel(categories, threshold: float = config.STRATEGY_B_THRESHOLD):
+    """Trainer-compatible compute_metrics for Strategy B (micro-averaged P/R/F1)."""
+    def compute_metrics(eval_pred):
+        predictions, label_ids = eval_pred
+        tp, fp, fn = multilabel_counts(predictions, label_ids, threshold)
+        TP, FP, FN = float(tp.sum()), float(fp.sum()), float(fn.sum())
+        precision = TP / (TP + FP) if (TP + FP) > 0 else 0.0
+        recall = TP / (TP + FN) if (TP + FN) > 0 else 0.0
+        f1 = (2 * precision * recall / (precision + recall)
+              if (precision + recall) > 0 else 0.0)
+        return {"precision": precision, "recall": recall, "f1": f1}
+
+    return compute_metrics
+
+
+def per_category_report_multilabel(
+    logits,
+    labels,
+    categories,
+    support: "Counter | None" = None,
+    threshold: float = config.STRATEGY_B_THRESHOLD,
+    min_support: int = config.MIN_CATEGORY_SUPPORT,
+) -> str:
+    """Per-category token-level P/R/F1 for Strategy B, sorted worst-F1 first (section 8)."""
+    tp, fp, fn = multilabel_counts(logits, labels, threshold)
+    precision, recall, f1 = _prf(tp, fp, fn)
+
+    rows = []
+    for i, cat in enumerate(categories):
+        sup = support.get(cat, int(tp[i] + fn[i])) if support is not None else int(tp[i] + fn[i])
+        low = sup < min_support
+        rows.append((f1[i], cat, precision[i], recall[i], sup, low))
+    rows.sort(key=lambda r: r[0])
+
+    lines = [f"{'category':<40} {'P':>6} {'R':>6} {'F1':>6} {'support':>8}  note"]
+    for f1v, cat, p, r, sup, low in rows:
+        note = "LOW SUPPORT — not statistically meaningful" if low else ""
+        lines.append(f"{cat:<40} {p:>6.3f} {r:>6.3f} {f1v:>6.3f} {sup:>8}  {note}")
+    return "\n".join(lines)
+
+
 def training_support(train_dataset, id2label) -> Counter:
     """Count B-<category> occurrences per category in the training split.
 
