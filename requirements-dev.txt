@@ -5,4 +5,4 @@ pytest>=7.4,<9
 # numpy is needed to exercise evaluate.decode_predictions in tests. It is already a
 # transitive dep of the ML stack; pinned here (matching requirements.txt) for the
 # pure-logic test environment that doesn't install transformers/torch.
-numpy>=1.26,<2.0
+numpy>=2.1,<3

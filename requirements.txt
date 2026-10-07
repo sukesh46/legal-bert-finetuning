@@ -1,22 +1,27 @@
-# Conservative, mutually-tested library cohort from late 2024.
-# Chosen for interoperability, NOT recency. See the spec's compatibility policy
-# (section 1) and the migration guide (section 11) before upgrading anything.
+# Current, mutually-tested library cohort for Python 3.13 (stock Google Colab).
 #
-# Target runtime: Python 3.10 on Google Colab (T4 GPU).
+# This replaces the original late-2024 cohort (transformers 4.46 / numpy<2 / Python
+# 3.10). That stack could not run on current Colab: Colab now ships Python 3.13, and
+# numpy<2 / tokenizers<0.23 have no 3.13 wheels, while the condacolab route to force 3.10
+# no longer works. These pins were resolved together by pip and all declare Python >=3.10
+# support, so they install natively on Colab's 3.13 with no conda gymnastics.
+#
+# See the spec's compatibility policy (section 1) and migration guide (section 11).
 
-transformers==4.46.0
-datasets==3.0.1
-tokenizers==0.20.1
-huggingface_hub==0.26.2
-accelerate==1.0.1
-evaluate==0.4.3
+transformers==5.19.0
+datasets==4.8.5
+tokenizers==0.23.2
+# transformers 5.19 requires huggingface_hub>=1.0 — do not pin below 1.0.
+huggingface_hub==1.33.0
+accelerate==1.15.0
+evaluate==0.4.6
 seqeval==1.2.2
 
-# numpy held below 2.0: the 2024 torch/transformers wheels were built against the
-# NumPy 1.26 ABI; NumPy 2.x triggers "_ARRAY_API not found" import crashes on Colab.
-numpy>=1.26,<2.0
+# numpy 2.x — the modern cohort is built against the NumPy 2 ABI. (numpy 2.5 requires
+# Python >=3.12, satisfied by Colab's 3.13.)
+numpy==2.5.3
 
 # torch is intentionally NOT pinned here: on Colab, use the CUDA-matched build the
-# runtime ships and assert the version at runtime. Reinstalling torch on Colab
+# runtime ships (transformers 5.x requires torch >= 2.1). Reinstalling torch on Colab
 # commonly breaks the CUDA driver match. For local (CPU) development you may
 # `pip install torch` separately.

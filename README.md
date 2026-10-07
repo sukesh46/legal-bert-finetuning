@@ -32,53 +32,48 @@ notebooks/
 
 ## Compatibility policy (read before changing versions)
 
-- **Runtime: Python 3.10 on Colab (T4 GPU).** Not 3.9 (`datasets`/`evaluate` are moving
-  to a 3.10 floor) and not 3.11+ (the 2024 cohort was validated against 3.10).
-- The pinned library set is the **late-2024 mutually-tested cohort**, chosen for
-  interoperability rather than recency:
+- **Runtime: Python 3.13 on Colab (T4 GPU)** — stock Colab, no conda.
+- The pinned library set is a **current, mutually-resolved transformers 5.x cohort** with
+  native Python 3.13 wheels. These versions were resolved together by pip and all declare
+  Python >=3.10 support:
 
   | package | version |
   |---|---|
-  | transformers | 4.46.0 |
-  | datasets | 3.0.1 |
-  | tokenizers | 0.20.1 |
-  | huggingface_hub | 0.26.2 |
-  | accelerate | 1.0.1 |
-  | evaluate | 0.4.3 |
+  | transformers | 5.19.0 |
+  | datasets | 4.8.5 |
+  | tokenizers | 0.23.2 |
+  | huggingface_hub | 1.33.0 |
+  | accelerate | 1.15.0 |
+  | evaluate | 0.4.6 |
   | seqeval | 1.2.2 |
-  | numpy | >=1.26,<2.0 |
+  | numpy | 2.5.3 |
 
-- `torch` is intentionally **not** pinned: use Colab's CUDA-matched build.
-- The **"restart the runtime once after install"** step in the notebook is mandatory, not
-  optional — it ensures the pinned `numpy`/`tokenizers` are the ones imported.
-- Do not upgrade casually. See the spec's §11 migration guide first (transformers 5.x
-  dropped TF/Flax and renamed arguments; `eval_strategy` is correct only for ≥4.46,<5).
+- `torch` is intentionally **not** pinned: use Colab's CUDA-matched build (transformers
+  5.x requires torch >= 2.1).
+- **History:** the project originally pinned the late-2024 cohort (transformers 4.46 /
+  numpy<2 / Python 3.10). That stack cannot run on current Colab — Colab moved to Python
+  3.13, where numpy<2 and tokenizers<0.23 have no wheels, and the `condacolab` route to
+  force 3.10 no longer works. The re-pin above is the deliberate migration that resolves it.
+- **transformers 5.x API notes baked into the code:** `Trainer` takes `processing_class=`
+  (the old `tokenizer=` was removed in v5); `eval_strategy` is the correct
+  `TrainingArguments` spelling. See the spec's §11 migration guide before upgrading again.
 
 ## How to run (Colab)
 
 Open `notebooks/pipeline.ipynb` in Colab (File → Open notebook → GitHub →
 `sukesh46/legal-bert-finetuning` → `notebooks/pipeline.ipynb`) and set the hardware
-accelerator to **T4 GPU** (Runtime → Change runtime type).
+accelerator to **T4 GPU** (Runtime → Change runtime type). It runs on stock Colab Python
+3.13 — no conda, no mandatory restart.
 
-Stock Colab now ships **Python 3.13**, but the pinned cohort targets **3.10**. The
-notebook obtains 3.10 via `condacolab` (pinned to `0.1.8`, whose Miniconda is built for
-3.10), so the run order has a one-time kernel restart baked in:
-
-1. **Cell A** installs `condacolab` and auto-restarts the kernel (expected, not a crash).
-2. **Cell B** (after the restart) installs the pinned cohort into the conda 3.10 `base`.
-3. **Cell C** verifies the GPU + versions.
-4. Remaining cells: mount Drive → clone/pull this public repo into Drive → download →
+1. **Install cell** — `pip install` the pinned transformers 5.x cohort over Colab's stock
+   packages. (If pip reports a resolver conflict with a preinstalled Colab package,
+   Runtime → Restart session once, then continue.)
+2. **Verify cell** — checks the GPU and prints versions.
+3. Remaining cells: mount Drive → clone/pull this public repo into Drive → download →
    convert → chunk/tokenize → train → evaluate → inference.
 
 Each stage is one call into `legal_ner`; adjust `limit=` in the download cell for a quick
 smoke run on a handful of contracts.
-
-> **Note on the conda route.** Pinning Python 3.10 onto a 3.13 Colab VM via `condacolab`
-> is the pragmatic way to honor the pinned stack today, but it depends on an older
-> `condacolab` release and conda's base-env behavior, so it is more fragile than a native
-> install. If Colab's Python keeps advancing, the durable alternative is to re-pin the
-> whole cohort to a current (3.13-compatible) set — transformers 5.x, numpy 2.x — per the
-> migration guide in the spec (§11), which requires re-verifying the `Trainer` surface.
 
 ### Approximate T4 runtimes (fp16)
 

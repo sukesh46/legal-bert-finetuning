@@ -6,7 +6,7 @@
 
 ## 0. Deliverables checklist
 
-- [ ] `setup.ipynb` or first notebook cell block — environment setup (Python 3.10 + pinned 2024 cohort), GPU check, Drive mount, mandatory one-time runtime restart, and `requirements.lock.txt` capture
+- [ ] `setup.ipynb` or first notebook cell block — environment setup (stock Colab Python 3.13 + pinned transformers 5.x cohort), GPU check, Drive mount, and `requirements.lock.txt` capture
 - [ ] `download_cuad.py` — fetches and validates the CUAD dataset
 - [ ] `cuad_to_bio.py` — converts CUAD's SQuAD-style span annotations into token-level BIO tags
 - [ ] `chunking.py` — splits long contracts into model-length-safe, overlapping windows while preserving label alignment
@@ -20,17 +20,18 @@
 
 ## 1. Environment setup (Colab specifics)
 
-> **Compatibility policy (read first).** This pipeline deliberately targets a **conservative, mutually-tested library cohort from late 2024**, not the latest releases. Rationale: the whole stack (`transformers` 4.46 ↔ `tokenizers` ↔ `huggingface_hub` ↔ `datasets` 3.0 ↔ `accelerate` 1.0) shipped in the same window and is known to interoperate. The latest `transformers` is 5.x, which **dropped TensorFlow/Flax, removed several pipelines, and renamed arguments** — adopting it would mean debugging a library migration at the same time as the data-conversion logic. Do **not** bump these pins without a deliberate migration pass (see §11). The pins below still resolve on PyPI today.
+> **Compatibility policy (read first).** This pipeline targets a **current, mutually-resolved transformers 5.x cohort that runs natively on stock Colab (Python 3.13)**. The pins (`transformers` 5.19 ↔ `tokenizers` 0.23 ↔ `huggingface_hub` 1.33 ↔ `datasets` 4.8 ↔ `accelerate` 1.15 ↔ `numpy` 2.5) were resolved together by pip and all declare Python ≥3.10 support. Do **not** bump them without a deliberate migration pass (see §11).
+>
+> **History (why not the original 2024 cohort).** This spec originally pinned a conservative late-2024 stack (`transformers` 4.46 / `numpy`<2 / Python 3.10). That stack cannot run on current Colab: Colab now ships **Python 3.13**, where `numpy`<2 and `tokenizers`<0.23 have no wheels, and the `condacolab` route to force a 3.10 base no longer works (the Jupyter kernel keeps running Colab's 3.13 interpreter). The re-pin to transformers 5.x is the migration that resolves this.
 
-### 1.0 Runtime: Python 3.10
+### 1.0 Runtime: Python 3.13 (stock Colab)
 
-- **Select Python 3.10** for the Colab runtime (not 3.9, not 3.11+).
-  - Why not 3.9: `datasets`/`evaluate` are drifting toward a 3.10 floor (`datasets` 5.0 already requires ≥3.10). 3.9 ages out first and buys nothing here — the 4.46-era stack runs identically on 3.9 and 3.10.
-  - Why not 3.11+: unnecessary; the 2024 cohort was validated against 3.10, and newer interpreters increase the chance of a preinstalled-wheel mismatch.
-  - Verify at the top of the notebook:
+- Use the **stock Colab runtime (Python 3.13)** — no conda, no Python downgrade.
+- Set only the hardware accelerator: **Runtime → Change runtime type → T4 GPU**.
+- Verify at the top of the notebook:
     ```python
     import sys
-    assert sys.version_info[:2] == (3, 10), f"Expected Python 3.10, got {sys.version.split()[0]}"
+    assert sys.version_info[:2] >= (3, 10), f"Need Python >= 3.10, got {sys.version.split()[0]}"
     ```
 
 1. Runtime: **Runtime → Change runtime type → T4 GPU** (free tier). Verify in code:
@@ -47,25 +48,26 @@
    drive.mount('/content/drive')
    PROJECT_DIR = '/content/drive/MyDrive/legal_ner_project'
    ```
-3. Install the pinned cohort. **Pin everything that affects loading/training**, including `torch`, `numpy`, `tokenizers`, and `huggingface_hub` — leaving these floating is the actual source of "it worked yesterday" Colab breakage, because Colab's preinstalled `torch`/`numpy` drift independently of what you `pip install`.
+3. Install the pinned cohort on top of Colab's stock Python 3.13. `torch` is left as Colab's CUDA-matched build (transformers 5.x requires torch ≥ 2.1).
 
    ```bash
    !pip install -q \
-       transformers==4.46.0 \
-       datasets==3.0.1 \
-       tokenizers==0.20.1 \
-       huggingface_hub==0.26.2 \
-       accelerate==1.0.1 \
-       evaluate==0.4.3 \
+       transformers==5.19.0 \
+       datasets==4.8.5 \
+       tokenizers==0.23.2 \
+       huggingface_hub==1.33.0 \
+       accelerate==1.15.0 \
+       evaluate==0.4.6 \
        seqeval==1.2.2 \
-       "numpy>=1.26,<2.0"
+       numpy==2.5.3
    ```
 
    Notes:
-   - `transformers==4.46.0` requires Python ≥3.8 and is the version where the `TrainingArguments` eval argument is spelled **`eval_strategy`** (older versions used `evaluation_strategy`; v5 is different again). The code in §7 assumes this exact spelling.
-   - `numpy` is held below 2.0: the 2024 torch/transformers wheels were built against the NumPy 1.26 ABI, and letting NumPy 2.x install is a common source of `_ARRAY_API not found` import crashes on Colab.
-   - `torch` is intentionally **not** pinned in the install line — use the CUDA-matched build Colab ships for the selected runtime, then assert the version at runtime rather than forcing a reinstall (reinstalling torch on Colab often breaks the CUDA driver match). Record the resolved `torch.__version__` in the run log.
-   - After install, **restart the runtime once** (`Runtime → Restart session`) so the newly pinned `numpy`/`tokenizers` are the ones imported, then re-run from the top. This single restart avoids the most common Colab dependency-resolution failure.
+   - These versions were resolved together by pip and all declare Python ≥3.10 support, so they install natively on Colab's 3.13 — no conda, no mandatory restart.
+   - `transformers` 5.x spells the eval argument **`eval_strategy`** (unchanged from 4.46) and removed `Trainer(tokenizer=...)` in favour of **`processing_class=`** (see §7).
+   - `numpy` is 2.x here: the modern cohort is built against the NumPy 2 ABI.
+   - `torch` is **not** pinned — reinstalling torch on Colab often breaks the CUDA driver match. Record the resolved `torch.__version__` in the run log.
+   - If `pip` reports a resolver conflict with a preinstalled Colab package, `Runtime → Restart session` once and re-run from the top.
 
 4. Pin the resolved environment for reproducibility: after a successful install+restart, run `!pip freeze > {PROJECT_DIR}/requirements.lock.txt` so the exact resolved graph (including transitive deps) travels with the project.
 5. Set and log a random seed everywhere (`transformers.set_seed(42)`) — required for reproducibility discussions later. Also log `sys.version`, `torch.__version__`, `transformers.__version__`, and `datasets.__version__` to the run log at startup.
@@ -213,7 +215,7 @@ Note: `max_length=384` here matches the chunking window size from §5 — these 
   )
   ```
 - **Case sensitivity note**: this checkpoint is `-uncased` — verify the tokenizer lowercases input (`tokenizer.do_lower_case == True`). If case-sensitive entity distinctions matter later (e.g., distinguishing a defined term `Agreement` from generic "agreement"), flag this as a known limitation in README; `law-ai/InLegalBERT` or a cased legal checkpoint would be the alternative.
-- Training arguments, tuned for Colab's free T4 (16GB VRAM). **Version coupling:** the eval argument below is spelled `eval_strategy`, which is correct for `transformers==4.46.0` (the pinned version). On transformers <4.46 it is `evaluation_strategy`; on transformers 5.x the Trainer surface changed again. Do not change this spelling unless you also migrate the pin (see §11).
+- Training arguments, tuned for Colab's free T4 (16GB VRAM). **Version coupling (transformers 5.x):** the eval argument is spelled `eval_strategy` (correct for 5.x; it was `evaluation_strategy` before 4.46). Also note `Trainer` now takes `processing_class=` instead of the removed `tokenizer=` argument. Do not change these unless you also migrate the pin (see §11).
 
   ```python
   TrainingArguments(
@@ -256,19 +258,18 @@ Must document: how to run each script in order, expected Colab T4 runtime per st
 
 The README must also state the **compatibility policy** explicitly:
 
-- Target runtime: **Python 3.10** on Colab (T4 GPU).
-- The pinned cohort is the **late-2024 mutually-tested set** (`transformers==4.46.0`, `datasets==3.0.1`, `tokenizers==0.20.1`, `huggingface_hub==0.26.2`, `accelerate==1.0.1`, `evaluate==0.4.3`, `seqeval==1.2.2`, `numpy<2.0`). These are chosen for interoperability, not recency.
+- Target runtime: **Python 3.13** on stock Colab (T4 GPU) — no conda.
+- The pinned cohort is the **current transformers 5.x set** (`transformers==5.19.0`, `datasets==4.8.5`, `tokenizers==0.23.2`, `huggingface_hub==1.33.0`, `accelerate==1.15.0`, `evaluate==0.4.6`, `seqeval==1.2.2`, `numpy==2.5.3`), resolved together and 3.13-native.
 - Reproduce the exact environment from `requirements.lock.txt` (committed after the first successful run).
-- The "restart runtime once after install" step is mandatory, not optional — document it prominently.
 - Point readers to §11 before they attempt any version upgrade.
 
 ## 11. Version-upgrade / migration guide (do not upgrade casually)
 
-This pipeline is pinned on purpose. If a future maintainer needs to move to the current `transformers` 5.x line, treat it as a deliberate migration, not a `pip install -U`:
+This pipeline is pinned on purpose. The pins were already migrated once — from the original late-2024 cohort (transformers 4.46 / numpy<2 / Python 3.10) to the current transformers 5.x / Python 3.13 set — because Colab moved to Python 3.13 and the old stack had no 3.13 wheels. Record of what that migration required, and what any future bump must re-check:
 
-- **`transformers` 4.46 → 5.x breaking changes to expect:** TensorFlow and Flax support dropped (irrelevant here, PyTorch-only), several pipelines removed, and a batch of renamed arguments. Re-verify the `Trainer` / `TrainingArguments` surface used in §7, especially `eval_strategy`, `save_strategy`, `load_best_model_at_end`, and `fp16`.
-- **`datasets` 3.0 → 5.0:** requires Python ≥3.10 (already satisfied here) but has its own loading/`save_to_disk` behavior changes — re-run the §4.3.5 span-reconstruction validation after any `datasets` bump, since a serialization change there would silently corrupt labels.
-- **`numpy` 1.x → 2.x:** only after confirming the resolved `torch` build is compiled against the NumPy 2.x ABI; otherwise expect import-time crashes.
+- **4.46 → 5.x breaking changes that affected this code:** `Trainer(tokenizer=...)` was **removed** → use `processing_class=` (applied in `train.py`). `eval_strategy` is unchanged and correct. TensorFlow/Flax dropped and several pipelines removed (irrelevant here, PyTorch-only). Other TrainingArguments we use (`save_strategy`, `load_best_model_at_end`, `metric_for_best_model`, `fp16`, `per_device_*`, `gradient_accumulation_steps`, `weight_decay`, `seed`, `report_to`) are unchanged.
+- **`datasets` bumps:** re-run the §4.3.5 span-reconstruction validation after any `datasets` change, since a `save_to_disk`/serialization change there could silently corrupt labels.
+- **`numpy` 2.x:** the cohort is built against the NumPy 2 ABI; keep torch and numpy consistent (a torch built for a different NumPy ABI causes import-time crashes).
 - **Migration gate:** before accepting any upgrade, the full acceptance-criteria list below must pass again on the new stack — in particular criterion 1 (span reconstruction) and criterion 3 (5 epochs, no OOM on T4). Record the new resolved versions in a fresh `requirements.lock.txt`.
 
 ---

@@ -7,8 +7,9 @@ already exists in the output dir, training resumes from it.
 Heavy imports (torch/transformers/datasets) are lazy so this module can be imported for
 inspection without the full stack installed.
 
-Version coupling: `eval_strategy` is correct for transformers==4.46.0 (the pinned
-version). Do not rename it without the migration pass in spec section 11.
+Version coupling (transformers 5.x): `eval_strategy` is the correct TrainingArguments
+spelling, and `Trainer` takes `processing_class=` (the old `tokenizer=` was removed in
+v5). Do not change these without the migration pass in spec section 11.
 """
 
 from __future__ import annotations
@@ -49,7 +50,7 @@ def build_training_args(output_dir: str | None = None):
     output_dir = output_dir or config.project_path(config.CHECKPOINTS_DIRNAME)
     return TrainingArguments(
         output_dir=output_dir,
-        eval_strategy="epoch",          # transformers>=4.46 spelling
+        eval_strategy="epoch",          # transformers 5.x spelling (renamed from 4.46)
         save_strategy="epoch",
         save_total_limit=2,             # avoid filling the Drive quota
         learning_rate=2e-5,
@@ -109,7 +110,8 @@ def train(
         args=args,
         train_dataset=tokenized_train,
         eval_dataset=tokenized_val,
-        tokenizer=tokenizer,
+        # transformers 5.x removed Trainer(tokenizer=...); use processing_class.
+        processing_class=tokenizer,
         data_collator=data_collator,
         compute_metrics=make_compute_metrics(id2label),
     )
