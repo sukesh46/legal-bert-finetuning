@@ -15,6 +15,9 @@ tokenizers==0.23.2
 huggingface_hub==1.33.0
 accelerate==1.15.0
 evaluate==0.4.6
+# seqeval 1.2.2 ships only an sdist; its legacy setup.py build fails against very new
+# setuptools_scm on Python 3.13 (ModuleNotFoundError: vcs_versioning). Install it with an
+# isolated PEP 517 build:  pip install --use-pep517 seqeval==1.2.2
 seqeval==1.2.2
 
 # numpy 2.x — the modern cohort is built against the NumPy 2 ABI. (numpy 2.5 requires
