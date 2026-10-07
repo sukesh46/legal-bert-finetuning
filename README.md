@@ -56,14 +56,29 @@ notebooks/
 
 ## How to run (Colab)
 
-1. Clone this repo somewhere importable (e.g. under your Drive project dir).
-2. Open `notebooks/pipeline.ipynb`, set **Runtime → Python 3.10 + T4 GPU**.
-3. Run the install cell, then **Runtime → Restart session**.
-4. Run the remaining cells top to bottom: setup → download → convert → chunk/tokenize →
-   train → evaluate → inference.
+Open `notebooks/pipeline.ipynb` in Colab (File → Open notebook → GitHub →
+`sukesh46/legal-bert-finetuning` → `notebooks/pipeline.ipynb`) and set the hardware
+accelerator to **T4 GPU** (Runtime → Change runtime type).
+
+Stock Colab now ships **Python 3.13**, but the pinned cohort targets **3.10**. The
+notebook obtains 3.10 via `condacolab` (pinned to `0.1.8`, whose Miniconda is built for
+3.10), so the run order has a one-time kernel restart baked in:
+
+1. **Cell A** installs `condacolab` and auto-restarts the kernel (expected, not a crash).
+2. **Cell B** (after the restart) installs the pinned cohort into the conda 3.10 `base`.
+3. **Cell C** verifies the GPU + versions.
+4. Remaining cells: mount Drive → clone/pull this public repo into Drive → download →
+   convert → chunk/tokenize → train → evaluate → inference.
 
 Each stage is one call into `legal_ner`; adjust `limit=` in the download cell for a quick
 smoke run on a handful of contracts.
+
+> **Note on the conda route.** Pinning Python 3.10 onto a 3.13 Colab VM via `condacolab`
+> is the pragmatic way to honor the pinned stack today, but it depends on an older
+> `condacolab` release and conda's base-env behavior, so it is more fragile than a native
+> install. If Colab's Python keeps advancing, the durable alternative is to re-pin the
+> whole cohort to a current (3.13-compatible) set — transformers 5.x, numpy 2.x — per the
+> migration guide in the spec (§11), which requires re-verifying the `Trainer` surface.
 
 ### Approximate T4 runtimes (fp16)
 
