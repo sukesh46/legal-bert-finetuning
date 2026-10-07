@@ -20,9 +20,10 @@ evaluate==0.4.6
 # isolated PEP 517 build:  pip install --use-pep517 seqeval==1.2.2
 seqeval==1.2.2
 
-# numpy 2.x — the modern cohort is built against the NumPy 2 ABI. (numpy 2.5 requires
-# Python >=3.12, satisfied by Colab's 3.13.)
-numpy==2.5.3
+# numpy 2.x — the modern cohort is built against the NumPy 2 ABI. Held at 2.2.6 (not the
+# newest 2.5) so it also satisfies Colab's preinstalled numba (which requires numpy<2.3);
+# this avoids a resolver conflict warning on Colab.
+numpy==2.2.6
 
 # torch is intentionally NOT pinned here: on Colab, use the CUDA-matched build the
 # runtime ships (transformers 5.x requires torch >= 2.1). Reinstalling torch on Colab
