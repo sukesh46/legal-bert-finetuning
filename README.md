@@ -138,5 +138,6 @@ test is skipped automatically if `seqeval` isn't installed locally; it runs on C
 
 ## Data & license
 
-CUAD is distributed under CC BY 4.0 by The Atticus Project. This pipeline fetches
-`CUAD_v1.json` at runtime and never re-hosts or bundles the raw file.
+CUAD is distributed under CC BY 4.0 by The Atticus Project. This pipeline loads it at
+runtime from the canonical Hugging Face dataset (`theatticusproject/cuad-qa`) via the
+`datasets` library, and never re-hosts or bundles the raw data.

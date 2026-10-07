@@ -1,11 +1,12 @@
 """Fetch and validate the CUAD dataset (spec section 2).
 
-Source: https://github.com/TheAtticusProject/cuad (CC BY 4.0). The canonical file is
-CUAD_v1.json, SQuAD 2.0-formatted. We always fetch at runtime and never re-host or
-bundle the raw file, per CUAD's distribution terms.
+Source: the canonical Hugging Face dataset `theatticusproject/cuad-qa` (CC BY 4.0),
+loaded at runtime via `datasets` (preferred — see load_cuad_hf). A legacy zip-based
+fetch (download_cuad) is kept as a fallback. We never re-host or bundle the raw data.
 
-The download itself is thin; the validation and stats logic is factored into pure
-functions (validate_cuad / cuad_stats) so it can be unit-tested without the network.
+The HF dataset is FLAT (one row per question/context); hf_rows_to_cuad adapts it into
+the nested SQuAD shape that convert_cuad consumes. The adaptation, validation and stats
+logic are pure functions, unit-tested without the network.
 """
 
 from __future__ import annotations
@@ -18,7 +19,12 @@ from dataclasses import dataclass
 
 from . import config
 
-# The repository distributes CUAD_v1.json inside CUAD_v1.zip at the raw GitHub path.
+# Preferred source: the canonical Hugging Face dataset (CC BY 4.0). This is more robust
+# than scraping a raw GitHub URL (which moves) and needs no auth. See load_cuad_hf().
+HF_DATASET_ID = "theatticusproject/cuad-qa"
+
+# Legacy fallback: the repository historically distributed CUAD_v1.json inside a zip.
+# NOTE: the exact raw path has changed over time; prefer the HF loader above.
 CUAD_ZIP_URL = (
     "https://github.com/TheAtticusProject/cuad/raw/main/CUAD_v1.zip"
 )
@@ -134,3 +140,69 @@ def format_stats(stats: CuadStats) -> str:
         f"{stats.impossible} impossible, {stats.categories} categories detected "
         f"(expected 41)."
     )
+
+
+# --------------------------------------------------------------------------- #
+# Hugging Face source (preferred)
+# --------------------------------------------------------------------------- #
+# The HF dataset is FLAT: one row per (question, context) with columns
+# id, title, context, question, answers{text[], answer_start[]}. There is no
+# is_impossible field — an impossible question simply has an empty answers.text list.
+# convert_cuad() expects the nested SQuAD shape data[].paragraphs[].qas[], so we adapt.
+
+def hf_rows_to_cuad(rows) -> dict:
+    """Adapt flat HF CUAD rows into the nested {"data": [...]} shape convert_cuad expects.
+
+    Rows are grouped by ``title`` (one contract == one paragraph). ``is_impossible`` is
+    synthesized as True when a row's answers list is empty. ``rows`` is any iterable of
+    dicts with keys: title, context, question, answers{text, answer_start}.
+    """
+    by_title: dict[str, dict] = {}
+    order: list[str] = []
+    for r in rows:
+        title = r["title"]
+        if title not in by_title:
+            by_title[title] = {"context": r["context"], "qas": []}
+            order.append(title)
+
+        ans = r.get("answers", {}) or {}
+        texts = list(ans.get("text", []) or [])
+        starts = list(ans.get("answer_start", []) or [])
+        answers = [{"text": t, "answer_start": s} for t, s in zip(texts, starts)]
+
+        by_title[title]["qas"].append(
+            {
+                "question": r["question"],
+                "id": r.get("id", ""),
+                "answers": answers,
+                "is_impossible": len(answers) == 0,
+            }
+        )
+
+    data = [
+        {"title": t, "paragraphs": [{"context": by_title[t]["context"], "qas": by_title[t]["qas"]}]}
+        for t in order
+    ]
+    return {"data": data}
+
+
+def load_cuad_hf(
+    dataset_id: str = HF_DATASET_ID,
+    split: str = "train+test",
+    limit: int | None = None,
+) -> tuple[dict, CuadStats]:
+    """Load CUAD from Hugging Face and return (cuad_nested, stats).
+
+    Uses `datasets.load_dataset`. By default concatenates train+test so the pipeline can
+    do its own contract-level split (section 4.4). ``limit`` caps the number of CONTRACTS
+    (titles) kept, for fast smoke runs.
+    """
+    from datasets import load_dataset
+
+    ds = load_dataset(dataset_id, split=split)
+    cuad = hf_rows_to_cuad(ds)
+    if limit is not None:
+        cuad = {**cuad, "data": cuad["data"][:limit]}
+    validate_cuad(cuad)
+    stats = cuad_stats(cuad)
+    return cuad, stats
