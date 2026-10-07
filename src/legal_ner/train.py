@@ -133,7 +133,13 @@ def train(
     from transformers import DataCollatorForTokenClassification, Trainer, set_seed
 
     set_seed(config.SEED)
-    output_dir = output_dir or config.project_path(config.CHECKPOINTS_DIRNAME)
+    # Strategy A and B produce INCOMPATIBLE checkpoints (83-way softmax head vs 41-head
+    # sigmoid). Keep them in separate subdirectories so resume_from_checkpoint never tries
+    # to load one strategy's weights into the other's architecture.
+    if output_dir is None:
+        output_dir = config.project_path(
+            config.CHECKPOINTS_DIRNAME, f"strategy_{config.STRATEGY.lower()}"
+        )
     os.makedirs(output_dir, exist_ok=True)
 
     # labels.json must travel with every checkpoint (both strategies).
