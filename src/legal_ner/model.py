@@ -79,17 +79,33 @@ def build_multilabel_model(model_name: str, categories: list[str]):
 
         def save_pretrained(self, save_directory, **kwargs):
             import os
+
+            from safetensors.torch import save_file
+
             os.makedirs(save_directory, exist_ok=True)
             self.config.save_pretrained(save_directory)
-            torch.save(self.state_dict(), os.path.join(save_directory, "pytorch_model.bin"))
+            # Save as safetensors to match what HF Trainer.save_model writes, so the
+            # loader finds the same file regardless of which path produced it.
+            state = {k: v.contiguous() for k, v in self.state_dict().items()}
+            save_file(state, os.path.join(save_directory, "model.safetensors"))
 
         @classmethod
         def from_pretrained_dir(cls, load_directory):
             import os
+
             m = cls()
-            state = torch.load(
-                os.path.join(load_directory, "pytorch_model.bin"), map_location="cpu"
-            )
+            st_path = os.path.join(load_directory, "model.safetensors")
+            bin_path = os.path.join(load_directory, "pytorch_model.bin")
+            if os.path.exists(st_path):
+                from safetensors.torch import load_file
+                state = load_file(st_path)
+            elif os.path.exists(bin_path):
+                state = torch.load(bin_path, map_location="cpu")
+            else:
+                raise FileNotFoundError(
+                    f"No model weights (model.safetensors or pytorch_model.bin) in "
+                    f"{load_directory}"
+                )
             m.load_state_dict(state)
             return m
 

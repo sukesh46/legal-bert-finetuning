@@ -302,7 +302,11 @@ def predict_multilabel(
 
 
 def load_for_inference_multilabel(model_dir: str):
-    """Load a Strategy B (model, tokenizer, categories) from a checkpoint directory."""
+    """Load a Strategy B (model, tokenizer, categories) from a checkpoint directory.
+
+    Reads weights from model.safetensors (what HF Trainer.save_model writes) or
+    pytorch_model.bin, whichever is present — see model.from_pretrained_dir.
+    """
     import os
 
     from transformers import AutoTokenizer
@@ -311,10 +315,20 @@ def load_for_inference_multilabel(model_dir: str):
 
     tokenizer = AutoTokenizer.from_pretrained(model_dir)
     categories = list(config.CUAD_CATEGORIES)
-    # Rebuild the architecture and load the saved weights.
-    import torch
+
     model = build_multilabel_model(config.MODEL_NAME, categories)
-    state = torch.load(os.path.join(model_dir, "pytorch_model.bin"), map_location="cpu")
+    st_path = os.path.join(model_dir, "model.safetensors")
+    bin_path = os.path.join(model_dir, "pytorch_model.bin")
+    if os.path.exists(st_path):
+        from safetensors.torch import load_file
+        state = load_file(st_path)
+    elif os.path.exists(bin_path):
+        import torch
+        state = torch.load(bin_path, map_location="cpu")
+    else:
+        raise FileNotFoundError(
+            f"No model weights (model.safetensors or pytorch_model.bin) in {model_dir}"
+        )
     model.load_state_dict(state)
     model.eval()
     return model, tokenizer, categories
